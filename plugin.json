@@ -1,0 +1,14 @@
+{
+  "description": "Ingfilm.ru",
+  "author": "Wain",
+  "homepage": "http://github.com/Wain-PC",
+  "title": "Ingfilm",
+  "synopsis": "Ingfilm",
+  "version": "0.1",
+  "file": "ingfilm.js",
+  "showtimeVersion": "4.9.389",
+  "type": "ecmascript",
+  "icon": "logo.png",
+  "id": "ingfilm",
+  "category": "video"
+}
