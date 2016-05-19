@@ -25,7 +25,7 @@ var plugin = this,
     html = require('showtime/html'),
     io = require('native/io');
 
-io.httpInspectorCreate('.*', function (req) {
+io.httpInspectorCreate('http://ingfilm.ru.*', function (req) {
     req.setCookie('beget', 'begetok;');
 });
 
