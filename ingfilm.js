@@ -29,6 +29,10 @@ io.httpInspectorCreate('http://ingfilm.ru.*', function (req) {
     req.setCookie('beget', 'begetok;');
 });
 
+plugin.addHTTPAuth("http:\/\/.*moonwalk.cc.*", function(authreq) {
+    authreq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 6.3; WOW64; rv:42.0) Gecko/20100101 Firefox/42.0');
+});
+
 
 function setPageHeader(page, title) {
     if (page.metadata) {
@@ -118,6 +122,82 @@ function findNextPage(dom) {
     return false;
 }
 
+function metaTag(res, tag) {
+    var dom = html.parse(res);
+    var meta = dom.root.getElementByTagName('meta'),
+        attrs;
+    for (var i in meta) {
+        if(meta.hasOwnProperty(i) && (attrs = meta[i].attributes)) {
+            if (attrs.getNamedItem('property') && attrs.getNamedItem('property').value == tag) return attrs.getNamedItem('content').value;
+            if (attrs.getNamedItem('name') && attrs.getNamedItem('name').value == tag) return attrs.getNamedItem('content').value;
+        }
+    }
+}
+
+
+function parseVideoIframe(url) {
+    var html, link, re, urlPart, postData;
+    switch (urlPart = url.substr(0, 9)) {
+        case 'http://mo':
+        case /http:\/\/\d{2}/.test(urlPart):
+            html = showtime.httpReq(url, {
+                method: 'GET',
+                headers: {
+                    'Referer': BASE_URL
+                }
+            }).toString();
+            postData = {
+                partner: '',
+                d_id: html.match(/d_id: '??([\s\S]*?)'??,/)[1].substr(1),
+                video_token: html.match(/video_token: '??([\s\S]*?)'??,/)[1].substr(1),
+                content_type: html.match(/content_type: '??([\s\S]*?)'??,/)[1].substr(1),
+                access_key: html.match(/access_key: '??([\s\S]*?)'??,/)[1].substr(1),
+                cd: 0
+            };
+
+            link = showtime.JSONDecode(showtime.httpReq('http://moonwalk.cc/sessions/create_session', {
+                postdata: postData,
+                headers: {
+                    "X-CSRF-Token": metaTag(html, "csrf-token"),
+                    'Referer': url,
+                    'Host': 'moonwalk.cc',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 6.3; WOW64; rv:42.0) Gecko/20100101 Firefox/42.0',
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'Content-Data': Duktape.enc('base64', /(\d{10}\.[a-f\d]+)/.exec(html)[1]),
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            }));
+            link = 'hls:' + link['manifest_m3u8'];
+            break;
+        case 'http://vk':
+        case 'https://v':
+            html = showtime.httpReq(decodeURIComponent(url));
+            re = /url720=(.*?)&/;
+            link = re.exec(html);
+            if (!link) {
+                re = /url480=(.*?)&/;
+                link = re.exec(html);
+            }
+            if (!link) {
+                re = /url360=(.*?)&/;
+                link = re.exec(html);
+            }
+            if (!link) {
+                re = /url240=(.*?)&/;
+                link = re.exec(html);
+            }
+            if (!link) {
+                page.error('Видео не доступно. / This video is not available, sorry :(');
+                return;
+            }
+            link = link[1];
+            break;
+        default:
+            break;
+    }
+    return link;
+}
+
 
 plugin.addURI(PREFIX + ":start", function (page) {
     setPageHeader(page, plugin.getDescriptor().synopsis);
@@ -196,6 +276,12 @@ plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, po
         description = getProperty(response.dom, 'post_content'),
         regExp = /<iframe.*? src="(.*?)".*?><\/iframe>/g, url;
     url = regExp.exec(response.text);
+
+    //Step 1. Locate script and load it
+    //Step 2. Find IFRAME URL in the script
+    //Step 3. Load Iframe content from URL
+    //Step 4. Locate video token and create URL
+
     while (url) {
         if(url && url[1]) {
             page.appendItem(PREFIX + ':play:' + encodeURIComponent(url[1]) + ":" + title, 'video', {
@@ -214,11 +300,22 @@ plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, po
 
 // Play links
 plugin.addURI(PREFIX + ":play:(.*):(.*)", function (page, url, title) {
-    var html, link;
+    var html, link, urlDecoded, titleDecoded;
     page.type = "video";
     page.loading = true;
-    url = decodeURIComponent(url);
-    title = decodeURIComponent(title);
+    urlDecoded = decodeURIComponent(url);
+    titleDecoded = decodeURIComponent(title);
+    link = parseVideoIframe(urlDecoded);
+
+    page.loading = false;
+    page.source = "videoparams:" + showtime.JSONEncode({
+            title: titleDecoded,
+            canonicalUrl: PREFIX + ':play:' + url + ':' + title,
+            sources: [{
+                url: link
+            }]
+        });
+
 
 
 });
