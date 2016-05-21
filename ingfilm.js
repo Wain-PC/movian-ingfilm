@@ -75,7 +75,7 @@ function makeRequest(page, url, settings, returnUnparsed) {
 }
 
 
-function findItems(page, dom) {
+function findItems(page, dom, countEntries) {
     var list = dom.getElementByClassName('short_content'),
         i, length = list.length,
         item,
@@ -97,6 +97,10 @@ function findItems(page, dom) {
             icon: picture,
             description: description
         });
+
+        if(countEntries) {
+            page.entries++;
+        }
     }
 }
 
@@ -112,11 +116,14 @@ function getProperty(item, className) {
     return '';
 }
 
-function findNextPage(dom) {
+function findNextPage(dom, searchMode) {
     var next = dom.getElementByClassName('next');
     if (next.length) {
         next = next[0];
-        next = next.children[0].attributes[0].value;
+        if(searchMode) {
+            return next.children[0].nodeName.toLowerCase() === 'a';
+        }
+        next = next.children[0].attributes.getNamedItem('href').value;
         return next;
     }
     return false;
@@ -251,6 +258,33 @@ function locateAdditionalPlayerLinks(page, response) {
         }
     }
     return result;
+}
+
+function unicode2win1251(str) {
+    if (str == 0) return 0;
+    var result = "";
+    var uniCode = 0;
+    var winCode = 0;
+    var i;
+    for (i = 0; i < str.length; i++) {
+        uniCode = str.charCodeAt(i);
+        if (uniCode == 1105) {
+            winCode = 184;
+        } else if (uniCode == 1025) {
+            winCode = 168;
+        } else if (uniCode > 1039 && uniCode < 1104) {
+            winCode = uniCode - 848;
+        } else {
+            winCode = uniCode;
+        }
+        result += String.fromCharCode(winCode);
+    }
+    var encoded = "";
+    for (i = 0; i < result.length; ++i) {
+        var code = Number(result.charCodeAt(i));
+        encoded += "%" + code.toString(16).toUpperCase();
+    }
+    return encoded;
 }
 
 
@@ -388,5 +422,30 @@ plugin.addURI(PREFIX + ":play:(.*):(.*):(.*)", function (page, url, title, direc
 
 
 plugin.addSearcher(plugin.getDescriptor().id, logo, function (page, query) {
+    var url, pageNum = 1,
+        paginator = function () {
+            console.log('!!!!!!!!'+query);
 
+        var dom = makeRequest(page, BASE_URL + '/index.php?do=search', {
+                postdata: {
+                    subaction:'search',
+                    do:'search',
+                    full_search:0,
+                    search_start:pageNum,
+                    result_from: page.entries+1,
+                    story: unicode2win1251(query)
+                }
+            }),
+            hasNextPage;
+        findItems(page, dom, true);
+        hasNextPage = findNextPage(dom, true);
+        if (hasNextPage) {
+            pageNum++;
+        }
+        return !!hasNextPage;
+
+    };
+    page.entries = 0;
+    page.paginator = paginator;
+    paginator();
 });
