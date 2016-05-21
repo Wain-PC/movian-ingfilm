@@ -350,7 +350,7 @@ plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, po
         });
 
         for(i=0;i<additionalPlayersLinks.length;i++) {
-            page.appendItem(PREFIX + ':play:' + encodeURIComponent(additionalPlayersLinks) + ":" + title + ":true", 'video', {
+            page.appendItem(PREFIX + ':play:' + encodeURIComponent(additionalPlayersLinks[i]) + ":" + title + ":false", 'video', {
                 title: decodeURIComponent(title),
                 icon: decodeURIComponent(poster),
                 description: description
