@@ -29,7 +29,7 @@ io.httpInspectorCreate('http://ingfilm.ru.*', function (req) {
     req.setCookie('beget', 'begetok;');
 });
 
-plugin.addHTTPAuth("http:\/\/.*moonwalk.cc.*", function(authreq) {
+plugin.addHTTPAuth("http:\/\/.*moonwalk.cc.*", function (authreq) {
     authreq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 6.3; WOW64; rv:42.0) Gecko/20100101 Firefox/42.0');
 });
 
@@ -127,7 +127,7 @@ function metaTag(res, tag) {
     var meta = dom.root.getElementByTagName('meta'),
         attrs;
     for (var i in meta) {
-        if(meta.hasOwnProperty(i) && (attrs = meta[i].attributes)) {
+        if (meta.hasOwnProperty(i) && (attrs = meta[i].attributes)) {
             if (attrs.getNamedItem('property') && attrs.getNamedItem('property').value == tag) return attrs.getNamedItem('content').value;
             if (attrs.getNamedItem('name') && attrs.getNamedItem('name').value == tag) return attrs.getNamedItem('content').value;
         }
@@ -196,6 +196,61 @@ function parseVideoIframe(url) {
             break;
     }
     return link;
+}
+
+function locateMainPlayerLink(page, response) {
+    //описание тайтл
+       var regExp = /<iframe.*? src="(.*?)".*?><\/iframe>/g, url,
+        scriptRegExp = /src="http:\/\/ingfilm\.ru\/player\/api\.php(.*?)">/, scriptUrl, scriptResponse,
+        iframeRegExp = /ifrm\.setAttribute\("src", "\/\/(.*?)"/, iframeUrl, iframeResponse,
+        playLinkRegExp = /src=\/video\/" \+ token \+ "(.*?) controls/,
+        token, playLink;
+    url = regExp.exec(response.text);
+
+    //Step 1. Locate script and load it
+    scriptUrl = scriptRegExp.exec(response.text);
+    if (scriptUrl && scriptUrl[1]) {
+        scriptUrl = BASE_URL + '/player/api.php' + scriptUrl[1];
+        scriptResponse = makeRequest(page, scriptUrl, null, true).text;
+
+
+        //Step 2. Find IFRAME URL in the script
+        iframeUrl = iframeRegExp.exec(scriptResponse);
+        if (iframeUrl && iframeUrl[1]) {
+            iframeUrl = iframeUrl[1];
+
+            //Step 3. Load Iframe content from URL
+            iframeResponse = makeRequest(page, 'http://' + iframeUrl, null, true);
+
+            //Step 4. Locate video token and create URL
+            token = iframeResponse.dom.getElementById('apiplayer').attributes.getNamedItem('token').value;
+
+            playLink = playLinkRegExp.exec(iframeResponse.text);
+            if (playLink && playLink[1]) {
+                playLink = BASE_URL + '/video/' + token + playLink[1];
+                playLink = 'hls:' + playLink;
+                return playLink;
+            }
+        }
+    }
+    return null;
+}
+
+function locateAdditionalPlayerLinks(page, response) {
+        var regExp = /<iframe.*? src="(.*?)".*?><\/iframe>/g,
+        url = regExp.exec(response.text), result = [];
+
+
+    while (url) {
+        if (url && url[1]) {
+            result.push(url[1]);
+            url = regExp.exec(response.text);
+        }
+        else {
+            url = null;
+        }
+    }
+    return result;
 }
 
 
@@ -272,40 +327,52 @@ plugin.addURI(PREFIX + ":list:(.*):(.*)", function (page, url, title) {
 plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, poster) {
     setPageHeader(page, decodeURIComponent(title));
     var response = makeRequest(page, decodeURIComponent(reqUrl), null, true),
-    //описание тайтл
-        description = getProperty(response.dom, 'post_content'),
-        regExp = /<iframe.*? src="(.*?)".*?><\/iframe>/g, url;
-    url = regExp.exec(response.text);
+        mainPlayerLink =  locateMainPlayerLink(page, response),
+        additionalPlayersLinks = locateAdditionalPlayerLinks(page, response), i,
+        description = getProperty(response.dom, 'post_content');
 
-    //Step 1. Locate script and load it
-    //Step 2. Find IFRAME URL in the script
-    //Step 3. Load Iframe content from URL
-    //Step 4. Locate video token and create URL
+    if(mainPlayerLink) {
+        page.appendItem("", "separator", {
+            title: "Основной плеер"
+        });
+        page.appendItem(PREFIX + ':play:' + encodeURIComponent(mainPlayerLink) + ":" + title + ":true", 'video', {
+            title: decodeURIComponent(title),
+            icon: decodeURIComponent(poster),
+            description: description
+        });
+    }
 
-    while (url) {
-        if(url && url[1]) {
-            page.appendItem(PREFIX + ':play:' + encodeURIComponent(url[1]) + ":" + title, 'video', {
+    if(additionalPlayersLinks.length) {
+
+        //добавим сепаратор, а после него все ссылки на доп. источники видео
+        page.appendItem("", "separator", {
+            title: "Доп. источники"
+        });
+
+        for(i=0;i<additionalPlayersLinks.length;i++) {
+            page.appendItem(PREFIX + ':play:' + encodeURIComponent(additionalPlayersLinks) + ":" + title + ":true", 'video', {
                 title: decodeURIComponent(title),
                 icon: decodeURIComponent(poster),
                 description: description
             });
-            url = regExp.exec(response.text);
-        }
-        else {
-            url = null;
         }
     }
 });
 
 
 // Play links
-plugin.addURI(PREFIX + ":play:(.*):(.*)", function (page, url, title) {
+plugin.addURI(PREFIX + ":play:(.*):(.*):(.*)", function (page, url, title, directPlay) {
     var html, link, urlDecoded, titleDecoded;
     page.type = "video";
     page.loading = true;
     urlDecoded = decodeURIComponent(url);
     titleDecoded = decodeURIComponent(title);
-    link = parseVideoIframe(urlDecoded);
+    if (directPlay === 'true') {
+        link = urlDecoded;
+    }
+    else {
+        link = parseVideoIframe(urlDecoded);
+    }
 
     page.loading = false;
     page.source = "videoparams:" + showtime.JSONEncode({
@@ -315,7 +382,6 @@ plugin.addURI(PREFIX + ":play:(.*):(.*)", function (page, url, title) {
                 url: link
             }]
         });
-
 
 
 });
