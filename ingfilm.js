@@ -21,9 +21,10 @@ var plugin = this,
     PREFIX = 'ingfilm',
     BASE_URL = 'http://ingfilm.ru',
     logo = plugin.path + "logo.png",
-    service = plugin.createService(plugin.getDescriptor().id, PREFIX + ":start", "video", true, logo),
     html = require('showtime/html'),
     io = require('native/io');
+
+plugin.createService(plugin.getDescriptor().id, PREFIX + ":start:false", "video", true, logo)
 
 io.httpInspectorCreate('http://ingfilm.ru.*', function (req) {
     req.setCookie('beget', 'begetok;');
@@ -45,6 +46,7 @@ function setPageHeader(page, title) {
 }
 
 function makeRequest(page, url, settings, returnUnparsed) {
+    var response;
     if (!url) {
         return showtime.message('NO_URL_IN_REQUEST');
     }
@@ -63,15 +65,16 @@ function makeRequest(page, url, settings, returnUnparsed) {
     }
     page.loading = true;
 
-    var v = showtime.httpReq(url, settings);
+    response = showtime.httpReq(url, settings);
     page.loading = false;
-    if (!returnUnparsed) {
-        return html.parse(v.toString()).root;
+    if (returnUnparsed) {
+        return {
+            dom: html.parse(response.toString()).root,
+            text: response.toString()
+        }
     }
-    return {
-        dom: html.parse(v.toString()).root,
-        text: v.toString()
-    }
+    return html.parse(response.toString()).root;
+
 }
 
 
@@ -98,7 +101,7 @@ function findItems(page, dom, countEntries) {
             description: description
         });
 
-        if(countEntries) {
+        if (countEntries) {
             page.entries++;
         }
     }
@@ -120,7 +123,7 @@ function findNextPage(dom, searchMode) {
     var next = dom.getElementByClassName('next');
     if (next.length) {
         next = next[0];
-        if(searchMode) {
+        if (searchMode) {
             return next.children[0].nodeName.toLowerCase() === 'a';
         }
         next = next.children[0].attributes.getNamedItem('href').value;
@@ -130,8 +133,8 @@ function findNextPage(dom, searchMode) {
 }
 
 function metaTag(res, tag) {
-    var dom = html.parse(res);
-    var meta = dom.root.getElementByTagName('meta'),
+    var dom = html.parse(res),
+        meta = dom.root.getElementByTagName('meta'),
         attrs;
     for (var i in meta) {
         if (meta.hasOwnProperty(i) && (attrs = meta[i].attributes)) {
@@ -206,13 +209,10 @@ function parseVideoIframe(url) {
 }
 
 function locateMainPlayerLink(page, response) {
-    //описание тайтл
-       var regExp = /<iframe.*? src="(.*?)".*?><\/iframe>/g, url,
-        scriptRegExp = /src="http:\/\/ingfilm\.ru\/player\/api\.php(.*?)">/, scriptUrl, scriptResponse,
+    var scriptRegExp = /src="http:\/\/ingfilm\.ru\/player\/api\.php(.*?)">/, scriptUrl, scriptResponse,
         iframeRegExp = /ifrm\.setAttribute\("src", "\/\/(.*?)"/, iframeUrl, iframeResponse,
         playLinkRegExp = /src=\/video\/" \+ token \+ "(.*?) controls/,
         token, playLink;
-    url = regExp.exec(response.text);
 
     //Step 1. Locate script and load it
     scriptUrl = scriptRegExp.exec(response.text);
@@ -243,8 +243,8 @@ function locateMainPlayerLink(page, response) {
     return null;
 }
 
-function locateAdditionalPlayerLinks(page, response) {
-        var regExp = /<iframe.*? src="(.*?)".*?><\/iframe>/g,
+function locateAdditionalPlayerLinks(response) {
+    var regExp = /<iframe.*? src="(.*?)".*?><\/iframe>/g,
         url = regExp.exec(response.text), result = [];
 
 
@@ -261,11 +261,8 @@ function locateAdditionalPlayerLinks(page, response) {
 }
 
 function unicode2win1251(str) {
-    if (str == 0) return 0;
-    var result = "";
-    var uniCode = 0;
-    var winCode = 0;
-    var i;
+    var result = "", uniCode, winCode, i;
+    if (!str || typeof str !== 'string') return '';
     for (i = 0; i < str.length; i++) {
         uniCode = str.charCodeAt(i);
         if (uniCode == 1105) {
@@ -287,34 +284,70 @@ function unicode2win1251(str) {
     return encoded;
 }
 
+function performLoginAttempt(page, showLoginWindow) {
+    var credentials = plugin.getAuthCredentials(plugin.getDescriptor().synopsis, "Логин", showLoginWindow),
+        response,
+        result = {
+            result: false,
+            response: null
+        };
+    if (credentials.rejected) { //rejected by user
+        result.rejected = true;
+        return result;
+    }
+    if (credentials && credentials.username && credentials.password) {
+        response = makeRequest(page, BASE_URL, {
+            postdata: {
+                'login_name': credentials.username,
+                'login_password': credentials.password,
+                'login': 'submit'
+            },
+            noFollow: true
+        });
+        result = {
+            result: !!response.getElementByClassName('login_block').length,
+            response: response
+        };
+    }
+    return result;
+}
+function performLogout(page) {
+    makeRequest(page, BASE_URL + '/index.php?action=logout', {
+        noFollow: true
+    });
+    page.redirect(PREFIX + ":start:true");
+}
 
-plugin.addURI(PREFIX + ":start", function (page) {
+
+plugin.addURI(PREFIX + ":logout", function (page) {
+    performLogout(page);
+});
+
+plugin.addURI(PREFIX + ":start:(.*)", function (page, forceAuth) {
     setPageHeader(page, plugin.getDescriptor().synopsis);
-    var loginSuccess = true,
-        dom,
+    var loginSuccess = !(forceAuth === 'true'),
+        loginResult,
+        response,
         sections, section, i, length,
         links, link;
-    while (1) {
-        var credentials = plugin.getAuthCredentials(plugin.getDescriptor().synopsis, "Логин", !loginSuccess);
-        showtime.print(credentials);
-        if (credentials.rejected) return; //rejected by user
-        if (credentials) {
-            dom = makeRequest(page, BASE_URL, {
-                postdata: {
-                    'login_name': credentials.username,
-                    'login_password': credentials.password,
-                    'login': 'submit'
-                },
-                noFollow: true
-            });
-            loginSuccess = !!dom.getElementByClassName('login_block').length;
-            if (loginSuccess) break;
+    while (true) {
+        loginResult = performLoginAttempt(page, !loginSuccess);
+        if (loginResult.rejected) {
+            return;
         }
+        loginSuccess = loginResult.result;
+        response = loginResult.response;
+        if (loginSuccess) break;
         loginSuccess = false;
     }
 
+    //добавим возможность логаута
+    page.appendItem(PREFIX + ":logout", "directory", {
+        title: new showtime.RichText("Выйти из аккаунта")
+    });
+
     //на главной странице находится несколько секций, парсим каждую из них
-    sections = dom.getElementByClassName('hblock');
+    sections = response.getElementByClassName('hblock');
     length = sections.length;
     for (i = 0; i < length; i++) {
         section = sections[i];
@@ -361,11 +394,11 @@ plugin.addURI(PREFIX + ":list:(.*):(.*)", function (page, url, title) {
 plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, poster) {
     setPageHeader(page, decodeURIComponent(title));
     var response = makeRequest(page, decodeURIComponent(reqUrl), null, true),
-        mainPlayerLink =  locateMainPlayerLink(page, response),
-        additionalPlayersLinks = locateAdditionalPlayerLinks(page, response), i,
+        mainPlayerLink = locateMainPlayerLink(page, response),
+        additionalPlayersLinks = locateAdditionalPlayerLinks(response), i,
         description = getProperty(response.dom, 'post_content');
 
-    if(mainPlayerLink) {
+    if (mainPlayerLink) {
         page.appendItem("", "separator", {
             title: "Основной плеер"
         });
@@ -376,14 +409,14 @@ plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, po
         });
     }
 
-    if(additionalPlayersLinks.length) {
+    if (additionalPlayersLinks.length) {
 
         //добавим сепаратор, а после него все ссылки на доп. источники видео
         page.appendItem("", "separator", {
             title: "Доп. источники"
         });
 
-        for(i=0;i<additionalPlayersLinks.length;i++) {
+        for (i = 0; i < additionalPlayersLinks.length; i++) {
             page.appendItem(PREFIX + ':play:' + encodeURIComponent(additionalPlayersLinks[i]) + ":" + title + ":false", 'video', {
                 title: decodeURIComponent(title),
                 icon: decodeURIComponent(poster),
@@ -396,7 +429,7 @@ plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, po
 
 // Play links
 plugin.addURI(PREFIX + ":play:(.*):(.*):(.*)", function (page, url, title, directPlay) {
-    var html, link, urlDecoded, titleDecoded;
+    var link, urlDecoded, titleDecoded;
     page.type = "video";
     page.loading = true;
     urlDecoded = decodeURIComponent(url);
@@ -422,30 +455,30 @@ plugin.addURI(PREFIX + ":play:(.*):(.*):(.*)", function (page, url, title, direc
 
 
 plugin.addSearcher(plugin.getDescriptor().id, logo, function (page, query) {
-    var url, pageNum = 1,
+    var pageNum = 1,
         paginator = function () {
-            console.log('!!!!!!!!'+query);
 
-        var dom = makeRequest(page, BASE_URL + '/index.php?do=search', {
-                postdata: {
-                    subaction:'search',
-                    do:'search',
-                    full_search:0,
-                    search_start:pageNum,
-                    result_from: page.entries+1,
-                    story: unicode2win1251(query)
-                }
-            }),
-            hasNextPage;
-        findItems(page, dom, true);
-        hasNextPage = findNextPage(dom, true);
-        if (hasNextPage) {
-            pageNum++;
-        }
-        return !!hasNextPage;
+            var dom = makeRequest(page, BASE_URL + '/index.php?do=search', {
+                    postdata: {
+                        subaction: 'search',
+                        do: 'search',
+                        full_search: 0,
+                        search_start: pageNum,
+                        result_from: page.entries + 1,
+                        story: unicode2win1251(query)
+                    }
+                }),
+                hasNextPage;
+            findItems(page, dom, true);
+            hasNextPage = findNextPage(dom, true);
+            if (hasNextPage) {
+                pageNum++;
+            }
+            return !!hasNextPage;
 
-    };
+        };
     page.entries = 0;
     page.paginator = paginator;
+    performLoginAttempt(page);
     paginator();
 });
