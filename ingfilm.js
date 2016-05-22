@@ -22,7 +22,8 @@ var plugin = this,
     BASE_URL = 'http://ingfilm.ru',
     logo = plugin.path + "logo.png",
     html = require('showtime/html'),
-    io = require('native/io');
+    io = require('native/io'),
+    itemData;
 
 plugin.createService(plugin.getDescriptor().id, PREFIX + ":start:false", "video", true, logo)
 
@@ -212,7 +213,8 @@ function locateMainPlayerLink(page, response) {
     var scriptRegExp = /src="http:\/\/ingfilm\.ru\/player\/api\.php(.*?)">/, scriptUrl, scriptResponse,
         iframeRegExp = /ifrm\.setAttribute\("src", "\/\/(.*?)"/, iframeUrl, iframeResponse,
         playLinkRegExp = /src=\/video\/" \+ token \+ "(.*?) controls/,
-        token, playLink;
+        token, playLink,
+        seriesData;
 
     //Step 1. Locate script and load it
     scriptUrl = scriptRegExp.exec(response.text);
@@ -232,6 +234,23 @@ function locateMainPlayerLink(page, response) {
             //Step 4. Locate video token and create URL
             token = iframeResponse.dom.getElementById('apiplayer').attributes.getNamedItem('token').value;
 
+            //если мы грузим сериал, то нам нужно составить 3 массива: Сезоны, Эпизоды, Озвучки (не всегда есть)
+            seriesData = {
+                voices: getSeriesData(iframeResponse.dom, 'translator'),
+                seasons: getSeriesData(iframeResponse.dom, 'season')
+            };
+
+
+            itemData = seriesData;
+            itemData.token = token;
+            itemData.kpid = /kpid=(\d+?)&/.exec(iframeUrl)[1];
+            itemData.url = /url=(.+?)&/.exec(iframeUrl)[1];
+
+            if (seriesData.voices._length || seriesData.seasons._length) {
+                return seriesData;
+            }
+
+
             playLink = playLinkRegExp.exec(iframeResponse.text);
             if (playLink && playLink[1]) {
                 playLink = BASE_URL + '/video/' + token + playLink[1];
@@ -241,6 +260,46 @@ function locateMainPlayerLink(page, response) {
         }
     }
     return null;
+}
+
+function getSeriesData(dom, type) {
+    var response = [],
+        selectOptions,
+        initialObject = {};
+    selectOptions = dom.getElementById(type);
+    if (!selectOptions) {
+        return response;
+    }
+
+    selectOptions = selectOptions.getElementByTagName('option');
+    if (selectOptions.length) {
+        Object.defineProperty(initialObject, '_length', {
+            value: 0,
+            writable: true,
+            enumerable: false //it's default value, but I implicitly stated it here, as that's why such syntax has been used here.
+        });
+
+
+        response = selectOptions.reduce(function (res, item) {
+            var obj = {
+                name: item.textContent,
+                value: item.attributes.getNamedItem('value').value
+            };
+
+            //для типа voice нужно добавить еще и значение атрибута ID
+            if (type === 'translator') {
+                obj.id = item.attributes.getNamedItem('id').value
+            }
+
+            res[obj.value] = obj;
+            res._length++;
+
+            return res;
+        }, initialObject);
+    }
+
+    return response;
+
 }
 
 function locateAdditionalPlayerLinks(response) {
@@ -323,6 +382,129 @@ plugin.addURI(PREFIX + ":logout", function (page) {
     performLogout(page);
 });
 
+
+plugin.addURI(PREFIX + ":voice:(.*):(.*)", function (page, title, value) {
+    var response, resJson, seasons;
+
+    title = decodeURIComponent(title);
+    value = decodeURIComponent(value);
+    setPageHeader(page, title);
+
+    //выполним запрос к списку сезонов с этой озвучкой
+    response = makeRequest(page, BASE_URL + '/player/ajax.php', {
+        method: 'GET',
+        args: {
+            pl: 'true',
+            season: 1,
+            episode: 1,
+            ts: itemData.voices[value].id,
+            translator: value,
+            kpid: itemData.kpid,
+            url: itemData.url
+        }
+    }, true);
+
+    resJson = showtime.JSONDecode(response.text);
+    //составим список сезонов из пришедших данных
+    seasons = html.parse('<select id="season">' + resJson['seasonplaylist'] + '</select>').root;
+    seasons = getSeriesData(seasons, 'season');
+
+    //выведем список сезонов на страницу, каждый будет вести на страницу со списом серий
+    for (i in seasons) {
+        if (seasons.hasOwnProperty(i)) {
+            page.appendItem(PREFIX + ':season:' + encodeURIComponent(title + ' / ' + seasons[i].name) + ":" + encodeURIComponent(seasons[i].value) + ":" + encodeURIComponent(value), 'directory', {
+                title: seasons[i].name,
+                icon: seasons[i].value
+            });
+        }
+    }
+
+});
+
+
+plugin.addURI(PREFIX + ":season:(.*):(.*):(.*)", function (page, title, seasonId, voiceId) {
+    var response, resJson, episodes, i, requestArgs;
+
+    title = decodeURIComponent(title);
+    seasonId = decodeURIComponent(seasonId);
+    voiceId = decodeURIComponent(voiceId);
+    setPageHeader(page, title);
+
+    requestArgs = {
+        pl: 'true',
+        season: seasonId,
+        episode: 1,
+        kpid: itemData.kpid,
+        url: itemData.url
+    };
+
+    if(voiceId !== 'null') {
+        requestArgs.ts = itemData.voices[voiceId].id;
+        requestArgs.translator = voiceId;
+    }
+
+    //выполним запрос к списку сезонов с этой озвучкой
+    response = makeRequest(page, BASE_URL + '/player/ajax.php', {
+        method: 'GET',
+        args: requestArgs
+    }, true);
+
+    resJson = showtime.JSONDecode(response.text);
+    //составим список эпизодов из пришедших данных
+    episodes = html.parse('<select id="episode">' + resJson['episodeplaylist'] + '</select>').root;
+    episodes = getSeriesData(episodes, 'episode');
+
+    //выведем список эпизодов на страницу, каждый будет вести на страницу эпизода, где мы найдем ссылку на видео, а оттуда редиректнем на воспроизведение
+    for (i in episodes) {
+        if (episodes.hasOwnProperty(i)) {
+            page.appendItem(PREFIX + ':episode:' + encodeURIComponent(title + ' / ' + episodes[i].name) + ":" + encodeURIComponent(seasonId) + ":" + encodeURIComponent(voiceId) + ":" + encodeURIComponent(episodes[i].value), 'directory', {
+                title: episodes[i].name,
+                icon: episodes[i].value
+            });
+        }
+    }
+
+});
+
+
+plugin.addURI(PREFIX + ":episode:(.*):(.*):(.*):(.*)", function (page, title, seasonId, voiceId, episodeId) {
+    var response, resJson, episodes, i, requestArgs;
+
+    title = decodeURIComponent(title);
+    seasonId = decodeURIComponent(seasonId);
+    voiceId = decodeURIComponent(voiceId);
+    episodeId = decodeURIComponent(episodeId);
+    setPageHeader(page, title);
+
+    requestArgs = {
+        pl: 'false',
+        season: seasonId,
+        episode: episodeId,
+        kpid: itemData.kpid,
+        url: itemData.url
+    };
+
+    if(voiceId !== 'null') {
+        requestArgs.ts = itemData.voices[voiceId].id;
+        requestArgs.translator = voiceId;
+    }
+
+    //выполним запрос к списку сезонов с этой озвучкой
+    response = makeRequest(page, BASE_URL + '/player/ajax.php', {
+        method: 'GET',
+        args: requestArgs
+    }, true);
+
+    resJson = showtime.JSONDecode(response.text);
+    //найдем ссылку на видео в пришедшем JSON и создадим пункт "Воспроизведение"
+    page.appendItem(PREFIX + ':play:' + encodeURIComponent('hls:' + BASE_URL + resJson['html5']) + ":" + title + ":true", 'video', {
+        title: decodeURIComponent(title)
+    });
+
+
+});
+
+
 plugin.addURI(PREFIX + ":start:(.*)", function (page, forceAuth) {
     setPageHeader(page, plugin.getDescriptor().synopsis);
     var loginSuccess = !(forceAuth === 'true'),
@@ -392,13 +574,53 @@ plugin.addURI(PREFIX + ":list:(.*):(.*)", function (page, url, title) {
 
 
 plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, poster) {
-    setPageHeader(page, decodeURIComponent(title));
-    var response = makeRequest(page, decodeURIComponent(reqUrl), null, true),
+    title = decodeURIComponent(title);
+    setPageHeader(page, title);
+    reqUrl = decodeURIComponent(reqUrl);
+    var response = makeRequest(page, reqUrl, null, true),
         mainPlayerLink = locateMainPlayerLink(page, response),
         additionalPlayersLinks = locateAdditionalPlayerLinks(response), i,
         description = getProperty(response.dom, 'post_content');
 
-    if (mainPlayerLink) {
+    //это сериал
+    if (typeof mainPlayerLink === 'object') {
+
+        //есть разные озвучки, создадим их список
+        if (mainPlayerLink.voices._length) {
+            page.appendItem("", "separator", {
+                title: "Озвучки"
+            });
+
+            for (i in mainPlayerLink.voices) {
+                if (mainPlayerLink.voices.hasOwnProperty(i)) {
+                    page.appendItem(PREFIX + ':voice:' + encodeURIComponent(title + ' / ' + mainPlayerLink.voices[i].name) + ":" + encodeURIComponent(mainPlayerLink.voices[i].value), 'directory', {
+                        title: mainPlayerLink.voices[i].name,
+                        icon: mainPlayerLink.voices[i].value,
+                        description: description
+                    });
+                }
+            }
+        }
+        //озвучек нет, значит, есть только сезоны. Создадим список сезонов.
+        else {
+            page.appendItem("", "separator", {
+                title: "Сезоны"
+            });
+
+            for (i in mainPlayerLink.seasons) {
+                if (mainPlayerLink.seasons.hasOwnProperty(i)) {
+                    page.appendItem(PREFIX + ':season:' + encodeURIComponent(title + ' / ' + mainPlayerLink.seasons[i].name) + ":" + encodeURIComponent(mainPlayerLink.seasons[i].value) + ":null", 'directory', {
+                        title: mainPlayerLink.seasons[i].name,
+                        icon: mainPlayerLink.seasons[i].value,
+                        description: description
+                    });
+                }
+            }
+        }
+
+    }
+
+    else {
         page.appendItem("", "separator", {
             title: "Основной плеер"
         });
@@ -407,22 +629,23 @@ plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, po
             icon: decodeURIComponent(poster),
             description: description
         });
-    }
 
-    if (additionalPlayersLinks.length) {
+        if (additionalPlayersLinks.length) {
 
-        //добавим сепаратор, а после него все ссылки на доп. источники видео
-        page.appendItem("", "separator", {
-            title: "Доп. источники"
-        });
-
-        for (i = 0; i < additionalPlayersLinks.length; i++) {
-            page.appendItem(PREFIX + ':play:' + encodeURIComponent(additionalPlayersLinks[i]) + ":" + title + ":false", 'video', {
-                title: decodeURIComponent(title),
-                icon: decodeURIComponent(poster),
-                description: description
+            //добавим сепаратор, а после него все ссылки на доп. источники видео
+            page.appendItem("", "separator", {
+                title: "Доп. источники"
             });
+
+            for (i = 0; i < additionalPlayersLinks.length; i++) {
+                page.appendItem(PREFIX + ':play:' + encodeURIComponent(additionalPlayersLinks[i]) + ":" + title + ":false", 'video', {
+                    title: decodeURIComponent(title),
+                    icon: decodeURIComponent(poster),
+                    description: description
+                });
+            }
         }
+
     }
 });
 
