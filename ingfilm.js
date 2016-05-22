@@ -147,10 +147,14 @@ function metaTag(res, tag) {
 
 
 function parseVideoIframe(url) {
+    console.log("YYY: "+ url);
     var html, link, re, urlPart, postData;
-    switch (urlPart = url.substr(0, 9)) {
+    urlPart = url.substr(0, 9);
+    console.log(urlPart);
+    switch (urlPart) {
         case 'http://mo':
-        case /http:\/\/\d{2}/.test(urlPart):
+        case /http:\/\/\d+/.test(urlPart):
+            console.log("YOBA!!!!!!!");
             html = showtime.httpReq(url, {
                 method: 'GET',
                 headers: {
@@ -178,6 +182,8 @@ function parseVideoIframe(url) {
                     'X-Requested-With': 'XMLHttpRequest'
                 }
             }));
+            console.log(JSON.stringify(link));
+
             link = 'hls:' + link['manifest_m3u8'];
             break;
         case 'http://vk':
@@ -579,7 +585,9 @@ plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, po
     reqUrl = decodeURIComponent(reqUrl);
     var response = makeRequest(page, reqUrl, null, true),
         mainPlayerLink = locateMainPlayerLink(page, response),
-        additionalPlayersLinks = locateAdditionalPlayerLinks(response), i,
+        additionalPlayersLinks = [],
+        //additionalPlayersLinks = locateAdditionalPlayerLinks(response),
+        i,
         description = getProperty(response.dom, 'post_content');
 
     //это сериал
@@ -621,9 +629,10 @@ plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, po
     }
 
     else {
-        page.appendItem("", "separator", {
+        /*page.appendItem("", "separator", {
             title: "Основной плеер"
         });
+        */
         page.appendItem(PREFIX + ':play:' + encodeURIComponent(mainPlayerLink) + ":" + title + ":true", 'video', {
             title: decodeURIComponent(title),
             icon: decodeURIComponent(poster),
