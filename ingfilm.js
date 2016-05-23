@@ -147,14 +147,11 @@ function metaTag(res, tag) {
 
 
 function parseVideoIframe(url) {
-    console.log("YYY: "+ url);
     var html, link, re, urlPart, postData;
     urlPart = url.substr(0, 9);
-    console.log(urlPart);
     switch (urlPart) {
         case 'http://mo':
         case /http:\/\/\d+/.test(urlPart):
-            console.log("YOBA!!!!!!!");
             html = showtime.httpReq(url, {
                 method: 'GET',
                 headers: {
@@ -182,7 +179,6 @@ function parseVideoIframe(url) {
                     'X-Requested-With': 'XMLHttpRequest'
                 }
             }));
-            console.log(JSON.stringify(link));
 
             link = 'hls:' + link['manifest_m3u8'];
             break;
