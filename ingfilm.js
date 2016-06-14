@@ -230,6 +230,10 @@ function locateMainPlayerLink(page, response) {
         if (iframeUrl && iframeUrl[1]) {
             iframeUrl = iframeUrl[1];
 
+            //Replace wrong URL param 'style' with the correct value (1)
+            //This is a possible fix for Issue #2
+            iframeUrl = iframeUrl.replace(/style=\d+?/, 'style=1');
+
             //Step 3. Load Iframe content from URL
             iframeResponse = makeRequest(page, 'http://' + iframeUrl, null, true);
 
