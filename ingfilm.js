@@ -60,8 +60,7 @@ function makeRequest(page, url, settings, returnUnparsed) {
     }
     if (!settings) {
         settings = {
-            method: 'GET',
-            noFollow: true
+            method: 'GET'
         };
     }
 
