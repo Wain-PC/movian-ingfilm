@@ -23,12 +23,16 @@ var plugin = this,
     logo = plugin.path + "logo.png",
     html = require('showtime/html'),
     io = require('native/io'),
-    itemData;
+    itemData,
+    referer;
 
 plugin.createService(plugin.getDescriptor().id, PREFIX + ":start:false", "video", true, logo)
 
 io.httpInspectorCreate('http://ingfilm.ru.*', function (req) {
     req.setCookie('beget', 'begetok;');
+    if(referer) {
+        req.setHeader('Referer', referer);
+    }
 });
 
 plugin.addHTTPAuth("http:\/\/.*moonwalk.cc.*", function (authreq) {
@@ -211,36 +215,32 @@ function parseVideoIframe(url) {
     return link;
 }
 
-function locateMainPlayerLink(page, response) {
+function locateMainPlayerLink(page, url, response) {
     var scriptRegExp = /src="http:\/\/ingfilm\.ru\/player\/api\.php(.*?)">/, scriptUrl, scriptResponse,
         iframeRegExp = /ifrm\.setAttribute\("src", "\/\/(.*?)"/, iframeUrl, iframeResponse,
         playLinkRegExp = /src=\/video\/" \+ token \+ "(.*?) controls/,
         token, playLink,
         seriesData;
 
+    referer = url;
     //Step 1. Locate script and load it
     scriptUrl = scriptRegExp.exec(response.text);
     if (scriptUrl && scriptUrl[1]) {
         scriptUrl = BASE_URL + '/player/api.php' + scriptUrl[1];
         scriptResponse = makeRequest(page, scriptUrl, null, true).text;
 
-
         //Step 2. Find IFRAME URL in the script
         iframeUrl = iframeRegExp.exec(scriptResponse);
         if (iframeUrl && iframeUrl[1]) {
-            iframeUrl = iframeUrl[1];
-
-            //Replace wrong URL param 'style' with the correct value (1)
-            //This is a possible fix for Issue #2
-            iframeUrl = iframeUrl.replace(/style=\d+?/, 'style=1');
+            iframeUrl = 'http://' + iframeUrl[1];
 
             //Step 3. Load Iframe content from URL
-            iframeResponse = makeRequest(page, 'http://' + iframeUrl, null, true);
+            iframeResponse = makeRequest(page, iframeUrl, null, true);
 
             //Step 4. Locate video token and create URL
             token = iframeResponse.dom.getElementById('apiplayer').attributes.getNamedItem('token').value;
 
-            //если мы грузим сериал, то нам нужно составить 3 массива: Сезоны, Эпизоды, Озвучки (не всегда есть)
+            //если мы грузим сериал, то нам нужно составить 2 массива: Сезоны, Озвучки (не всегда есть)
             seriesData = {
                 voices: getSeriesData(iframeResponse.dom, 'translator'),
                 seasons: getSeriesData(iframeResponse.dom, 'season')
@@ -259,13 +259,11 @@ function locateMainPlayerLink(page, response) {
 
             playLink = playLinkRegExp.exec(iframeResponse.text);
             if (playLink && playLink[1]) {
-                playLink = BASE_URL + '/video/' + token + playLink[1];
-                playLink = 'hls:' + playLink;
-                return playLink;
+                return 'hls:' + BASE_URL + '/video/' + token + playLink[1];
             }
         }
     }
-    return null;
+    return false;
 }
 
 function getSeriesData(dom, type) {
@@ -444,7 +442,7 @@ plugin.addURI(PREFIX + ":season:(.*):(.*):(.*)", function (page, title, seasonId
         url: itemData.url
     };
 
-    if(voiceId !== 'null') {
+    if (voiceId !== 'null') {
         requestArgs.ts = itemData.voices[voiceId].id;
         requestArgs.translator = voiceId;
     }
@@ -490,7 +488,7 @@ plugin.addURI(PREFIX + ":episode:(.*):(.*):(.*):(.*)", function (page, title, se
         url: itemData.url
     };
 
-    if(voiceId !== 'null') {
+    if (voiceId !== 'null') {
         requestArgs.ts = itemData.voices[voiceId].id;
         requestArgs.translator = voiceId;
     }
@@ -584,14 +582,14 @@ plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, po
     setPageHeader(page, title);
     reqUrl = decodeURIComponent(reqUrl);
     var response = makeRequest(page, reqUrl, null, true),
-        mainPlayerLink = locateMainPlayerLink(page, response),
+        mainPlayerLink = locateMainPlayerLink(page, reqUrl, response),
         additionalPlayersLinks = [],
         //additionalPlayersLinks = locateAdditionalPlayerLinks(response),
         i,
         description = getProperty(response.dom, 'post_content');
 
     //это сериал
-    if (typeof mainPlayerLink === 'object') {
+    if (mainPlayerLink && typeof mainPlayerLink === 'object') {
 
         //есть разные озвучки, создадим их список
         if (mainPlayerLink.voices._length) {
