@@ -24,15 +24,19 @@ var plugin = this,
     html = require('showtime/html'),
     io = require('native/io'),
     itemData,
-    referer;
+    referer,
+    moonSessionCookie = '',
+    moonSessionCookieRegExp = /session=_moon_session=(.+?);/gmi;
 
 plugin.createService(plugin.getDescriptor().id, PREFIX + ":start:false", "video", true, logo)
 
 io.httpInspectorCreate('http://ingfilm.ru.*', function (req) {
-    req.setCookie('beget', 'begetok;');
+    req.setCookie('session', '_moon_session='+moonSessionCookie);
     if(referer) {
         req.setHeader('Referer', referer);
     }
+
+    req.setHeader('User-Agent', "Mozilla/5.0 (Windows NT 6.3; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.2785.143 Safari/537.36");
 });
 
 plugin.addHTTPAuth("http:\/\/.*moonwalk.cc.*", function (authreq) {
@@ -239,6 +243,17 @@ function locateMainPlayerLink(page, url, response) {
 
             //Step 3. Load Iframe content from URL
             iframeResponse = makeRequest(page, iframeUrl, null, true);
+
+            //Step 3.1. get moon_session cookie
+            moonSessionCookie = moonSessionCookieRegExp.exec(iframeResponse.text);
+            if(moonSessionCookie && moonSessionCookie[1]) {
+                moonSessionCookie = moonSessionCookie[1];
+            }
+            else {
+                moonSessionCookie = '';
+            }
+
+            referer = iframeUrl;
 
             //Step 4. Locate video token and create URL
             token = iframeResponse.dom.getElementById('apiplayer').attributes.getNamedItem('token').value;
