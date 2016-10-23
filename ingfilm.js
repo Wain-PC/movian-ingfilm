@@ -31,8 +31,8 @@ var plugin = this,
 plugin.createService(plugin.getDescriptor().id, PREFIX + ":start:false", "video", true, logo)
 
 io.httpInspectorCreate('http://ingfilm.ru.*', function (req) {
-    req.setCookie('session', '_moon_session='+moonSessionCookie);
-    if(referer) {
+    req.setCookie('session', '_moon_session=' + moonSessionCookie);
+    if (referer) {
         req.setHeader('Referer', referer);
     }
 
@@ -246,7 +246,7 @@ function locateMainPlayerLink(page, url, response) {
 
             //Step 3.1. get moon_session cookie
             moonSessionCookie = moonSessionCookieRegExp.exec(iframeResponse.text);
-            if(moonSessionCookie && moonSessionCookie[1]) {
+            if (moonSessionCookie && moonSessionCookie[1]) {
                 moonSessionCookie = moonSessionCookie[1];
             }
             else {
@@ -277,7 +277,7 @@ function locateMainPlayerLink(page, url, response) {
 
             playLink = playLinkRegExp.exec(iframeResponse.text);
             if (playLink && playLink[1]) {
-                return 'hls:' + BASE_URL + '/video/' + token + playLink[1];
+                return BASE_URL + '/video/' + token + playLink[1];
             }
         }
     }
@@ -519,7 +519,7 @@ plugin.addURI(PREFIX + ":episode:(.*):(.*):(.*):(.*)", function (page, title, se
 
     resJson = showtime.JSONDecode(response.text);
     //найдем ссылку на видео в пришедшем JSON и создадим пункт "Воспроизведение"
-    page.appendItem(PREFIX + ':play:' + encodeURIComponent('hls:' + BASE_URL + resJson['html5']) + ":" + title + ":true", 'video', {
+    page.appendItem(PREFIX + ':quality:' + encodeURIComponent(BASE_URL + resJson['html5']) + ":" + title + ":true", 'video', {
         title: decodeURIComponent(title)
     });
 
@@ -602,7 +602,7 @@ plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, po
     var response = makeRequest(page, reqUrl, null, true),
         mainPlayerLink = locateMainPlayerLink(page, reqUrl, response),
         additionalPlayersLinks = [],
-        //additionalPlayersLinks = locateAdditionalPlayerLinks(response),
+    //additionalPlayersLinks = locateAdditionalPlayerLinks(response),
         i,
         description = getProperty(response.dom, 'post_content');
 
@@ -646,10 +646,10 @@ plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, po
 
     else {
         /*page.appendItem("", "separator", {
-            title: "Основной плеер"
-        });
-        */
-        page.appendItem(PREFIX + ':play:' + encodeURIComponent(mainPlayerLink) + ":" + title + ":true", 'video', {
+         title: "Основной плеер"
+         });
+         */
+        page.appendItem(PREFIX + ':quality:' + encodeURIComponent(mainPlayerLink) + ":" + title + ":true", 'video', {
             title: decodeURIComponent(title),
             icon: decodeURIComponent(poster),
             description: description
@@ -663,7 +663,7 @@ plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, po
             });
 
             for (i = 0; i < additionalPlayersLinks.length; i++) {
-                page.appendItem(PREFIX + ':play:' + encodeURIComponent(additionalPlayersLinks[i]) + ":" + title + ":false", 'video', {
+                page.appendItem(PREFIX + ':quality:' + encodeURIComponent(additionalPlayersLinks[i]) + ":" + title + ":false", 'video', {
                     title: decodeURIComponent(title),
                     icon: decodeURIComponent(poster),
                     description: description
@@ -674,13 +674,34 @@ plugin.addURI(PREFIX + ":item:(.*):(.*):(.*)", function (page, reqUrl, title, po
     }
 });
 
+// Set resolution
+plugin.addURI(PREFIX + ":quality:(.*):(.*):(.*)", function (page, url, title, directPlay) {
+    title = decodeURIComponent(title);
+    setPageHeader(page, "Выберите разрешение: "+title);
+    url = decodeURIComponent(url);
+    var response = makeRequest(page, url, null, true),
+        resolution, link,
+        resolutionRegExp = /#EXT-X-STREAM-INF:RESOLUTION=(.*?),/gmi,
+        linkRegExp = /http(.*?)\/index\.m3u8/gmi;
+
+    do {
+        resolution = resolutionRegExp.exec(response.text);
+        link = linkRegExp.exec(response.text);
+        if (resolution && link) {
+            page.appendItem(PREFIX + ':play:' + encodeURIComponent(link[0]) + ":" + title + ":"+ directPlay, 'video', {
+                title: resolution[1]
+            });
+        }
+    } while (resolution && link);
+});
+
 
 // Play links
 plugin.addURI(PREFIX + ":play:(.*):(.*):(.*)", function (page, url, title, directPlay) {
     var link, urlDecoded, titleDecoded;
     page.type = "video";
     page.loading = true;
-    urlDecoded = decodeURIComponent(url);
+    urlDecoded = 'hls:' + decodeURIComponent(url);
     titleDecoded = decodeURIComponent(title);
     if (directPlay === 'true') {
         link = urlDecoded;
